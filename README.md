@@ -4,4 +4,4 @@
 1. Vũ Tất Thành - __K24DTCN638__
 2. Nguyễn Quang Đạo - 
 3. Nguyễn Việt - 
-4. Nguyễn Viết Tùng - 
+4. Nguyễn Viết Tùng - __K24DTCN633__
