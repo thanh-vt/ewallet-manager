@@ -6,7 +6,6 @@
 #include <sstream>
 #include <ctime>
 #include <chrono>
-#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -24,9 +23,8 @@ UI::UI() {}
 UI::~UI() {}
 
 void UI::start() {
-    if (!Database::getInstance().loadFromFile()) {
-        std::cout << "No existing database found. Starting fresh.\n";
-    }
+    // Database is already loaded by the Database singleton constructor
+    // No need to load it again here
 
     while (true) {
         clearScreen();
@@ -233,13 +231,39 @@ void UI::createUser() {
     std::string fullname = getInput("Full Name: ");
     auto dob = getDateInput("Date of Birth (YYYY-MM-DD): ");
 
+    // Create new user with a generated password
     User newUser(username, fullname, dob);
+    std::string generatedPassword = newUser.generatePassword();  // Generate a new password
+    newUser.setPassword(generatedPassword);  // Set the generated password
+
+    // Create wallet for the user
+    std::string walletId = "W" + username;  // Simple wallet ID generation
+    Wallet wallet(walletId, 0.0);  // Create wallet with 0 balance
+
+    // First add the wallet
+    if (!Database::getInstance().addWallet(wallet)) {
+        std::cout << "Failed to create wallet for user.\n";
+        waitForEnter();
+        return;
+    }
+
+    // Set the wallet ID for the user
+    newUser.setWalletId(walletId);
+
+    // Then add the user
     if (Database::getInstance().addUser(newUser)) {
-        std::cout << "User created successfully.\n";
-        std::cout << "Generated password: " << newUser.getPassword() << "\n";
+        std::cout << "\nUser created successfully!\n";
+        std::cout << "Generated password: " << generatedPassword << "\n";
         std::cout << "Please save this password securely.\n";
+        
+        // Verify the save was successful
+        if (!Database::getInstance().saveToFile()) {
+            std::cout << "Warning: Failed to save changes to database.\n";
+        }
     } else {
         std::cout << "Failed to create user.\n";
+        // Clean up the wallet if user creation failed
+        Database::getInstance().deleteWallet(walletId);
     }
     waitForEnter();
 }

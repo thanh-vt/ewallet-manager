@@ -7,7 +7,6 @@
 #include <memory>
 #include <unordered_map>
 #include <fstream>
-#include <mutex>
 #include <filesystem>
 
 class Database {
@@ -19,8 +18,11 @@ class Database {
         std::unordered_map<std::string, std::shared_ptr<User>> users;
         std::unordered_map<std::string, std::shared_ptr<Wallet>> wallets;
         std::vector<Transaction> transactions_;
-        std::mutex mutex_;
         std::string DB_FILE;
+        std::filesystem::file_time_type lastFileModification;
+
+        // Helper function to check if file has been modified
+        bool isFileModified();
 
         // Binary serialization methods
         void serializeUser(std::ofstream& file, const User& user);

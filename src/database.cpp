@@ -1,12 +1,29 @@
 #include "database.hpp"
 #include <fstream>
-#include <sstream>
 #include <iomanip>
-#include <mutex>
 #include <iostream>
 #include <filesystem>
 
 Database* Database::instance = nullptr;
+
+// Helper function to check if file has been modified
+bool Database::isFileModified() {
+    try {
+        if (!std::filesystem::exists(DB_FILE)) {
+            throw std::runtime_error("Database file not found: " + DB_FILE);
+        }
+
+        auto lastWriteTime = std::filesystem::last_write_time(DB_FILE);
+        if (lastWriteTime != lastFileModification) {
+            lastFileModification = lastWriteTime;
+            return true;
+        }
+        return false;
+    } catch (const std::exception& e) {
+        std::cerr << "Critical error in isFileModified: " << e.what() << std::endl;
+        throw; // Re-throw the exception to crash the program
+    }
+}
 
 Database& Database::getInstance() {
     if (!instance) {
@@ -18,18 +35,36 @@ Database& Database::getInstance() {
 Database::Database() {
     std::cout << "Database constructor started..." << std::endl;
     
-    // Get the current executable path
     try {
+        // Get the executable directory
         std::filesystem::path exePath = std::filesystem::current_path();
-        std::cout << "Current path: " << exePath << std::endl;
+        std::cout << "Executable path: " << exePath << std::endl;
         
-        // Create database file path
-        std::filesystem::path dbPath = exePath / "database.dat";
-        std::cout << "Database path: " << dbPath << std::endl;
+        // Create database file path in executable directory
+        DB_FILE = (exePath / "database.dat").string();
+        std::cout << "Database path: " << DB_FILE << std::endl;
+
+        // Check if we can write to the directory
+        std::string testFile = (exePath / "test_write.tmp").string();
+        std::cout << "Testing write permissions with file: " << testFile << std::endl;
+        {
+            std::ofstream test(testFile);
+            if (!test) {
+                std::cerr << "Error: Cannot write to directory: " << exePath << std::endl;
+                return;
+            }
+            test << "test" << std::endl;
+            test.close();
+            std::filesystem::remove(testFile);
+        }
+        std::cout << "Write permissions verified" << std::endl;
         
-        // Try to load existing data first
-        if (!loadFromFile()) {
-            std::cout << "No existing database found. Creating new database..." << std::endl;
+        // Try to load existing data
+        bool loadSuccess = loadFromFile();
+        
+        // If loading failed or database is empty, create admin user and wallet
+        if (!loadSuccess || (users.empty() && wallets.empty())) {
+            std::cout << "Creating new database with admin user..." << std::endl;
             
             try {
                 std::cout << "Creating admin user..." << std::endl;
@@ -39,20 +74,14 @@ Database::Database() {
                 admin->setPassword("admin123"); // Default admin password
                 
                 std::cout << "Adding admin user to database..." << std::endl;
-                if (!addUser(*admin)) {
-                    std::cerr << "Failed to add admin user!" << std::endl;
-                    return;
-                }
+                users["admin"] = admin;  // Add directly to users map
                 
                 std::cout << "Creating admin wallet..." << std::endl;
                 // Create admin wallet
                 auto adminWallet = std::make_shared<Wallet>("ADMIN_WALLET", 1000000.0);
                 
                 std::cout << "Adding admin wallet to database..." << std::endl;
-                if (!addWallet(*adminWallet)) {
-                    std::cerr << "Failed to add admin wallet!" << std::endl;
-                    return;
-                }
+                wallets["ADMIN_WALLET"] = adminWallet;  // Add directly to wallets map
                 
                 std::cout << "Setting admin wallet ID..." << std::endl;
                 admin->setWalletId(adminWallet->getId());
@@ -83,44 +112,73 @@ Database::~Database() {
 
 bool Database::addUser(const User& user) {
     std::cout << "Adding user: " << user.getUsername() << std::endl;
-    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Only check for file modifications if we're not in initialization
+    if (!users.empty() && isFileModified()) {
+        std::cout << "Database file was modified, reloading..." << std::endl;
+        if (!loadFromFile()) {
+            std::cerr << "Failed to reload database" << std::endl;
+            return false;
+        }
+    }
+
     auto username = user.getUsername();
     if (users.find(username) != users.end()) {
         std::cout << "User already exists: " << username << std::endl;
         return false;
     }
+
+    // Add the user to the in-memory map
     users[username] = std::make_shared<User>(user);
-    std::cout << "User added successfully: " << username << std::endl;
-    return saveToFile();
+    std::cout << "User added to memory: " << username << std::endl;
+
+    // Save changes to file
+    if (!saveToFile()) {
+        std::cerr << "Failed to save database after adding user" << std::endl;
+        // Remove the user from memory if save failed
+        users.erase(username);
+        return false;
+    }
+
+    std::cout << "User successfully added and saved: " << username << std::endl;
+    return true;
 }
 
 bool Database::updateUser(const User& user) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (isFileModified()) {
+        if (!loadFromFile()) {
+            return false;
+        }
+    }
+
     auto username = user.getUsername();
     if (users.find(username) == users.end()) {
         return false;
     }
     users[username] = std::make_shared<User>(user);
-    return saveToFile(); // Save after updating user
+    return saveToFile();
 }
 
 bool Database::deleteUser(const std::string& username) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (isFileModified()) {
+        if (!loadFromFile()) {
+            return false;
+        }
+    }
+
     bool result = users.erase(username) > 0;
     if (result) {
-        saveToFile(); // Save after deleting user
+        saveToFile();
     }
     return result;
 }
 
 std::shared_ptr<User> Database::getUser(const std::string& username) {
-    std::lock_guard<std::mutex> lock(mutex_);
     auto it = users.find(username);
     return it != users.end() ? it->second : nullptr;
 }
 
 std::vector<std::shared_ptr<User>> Database::getAllUsers() {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::shared_ptr<User>> result;
     for (const auto& pair : users) {
         result.push_back(pair.second);
@@ -129,42 +187,74 @@ std::vector<std::shared_ptr<User>> Database::getAllUsers() {
 }
 
 bool Database::addWallet(const Wallet& wallet) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::cout << "Adding wallet: " << wallet.getId() << std::endl;
+    
+    // Only check for file modifications if we're not in initialization
+    if (!wallets.empty() && isFileModified()) {
+        std::cout << "Database file was modified, reloading..." << std::endl;
+        if (!loadFromFile()) {
+            std::cerr << "Failed to reload database" << std::endl;
+            return false;
+        }
+    }
+
     auto id = wallet.getId();
     if (wallets.find(id) != wallets.end()) {
+        std::cout << "Wallet already exists: " << id << std::endl;
         return false;
     }
+
+    // Add the wallet to the in-memory map
     wallets[id] = std::make_shared<Wallet>(wallet);
-    return saveToFile(); // Save after adding wallet
+    std::cout << "Wallet added to memory: " << id << std::endl;
+
+    // Save changes to file
+    if (!saveToFile()) {
+        std::cerr << "Failed to save database after adding wallet" << std::endl;
+        // Remove the wallet from memory if save failed
+        wallets.erase(id);
+        return false;
+    }
+
+    std::cout << "Wallet successfully added and saved: " << id << std::endl;
+    return true;
 }
 
 bool Database::updateWallet(const Wallet& wallet) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (isFileModified()) {
+        if (!loadFromFile()) {
+            return false;
+        }
+    }
+
     auto id = wallet.getId();
     if (wallets.find(id) == wallets.end()) {
         return false;
     }
     wallets[id] = std::make_shared<Wallet>(wallet);
-    return saveToFile(); // Save after updating wallet
+    return saveToFile();
 }
 
 bool Database::deleteWallet(const std::string& walletId) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (isFileModified()) {
+        if (!loadFromFile()) {
+            return false;
+        }
+    }
+
     bool result = wallets.erase(walletId) > 0;
     if (result) {
-        saveToFile(); // Save after deleting wallet
+        saveToFile();
     }
     return result;
 }
 
 std::shared_ptr<Wallet> Database::getWallet(const std::string& walletId) {
-    std::lock_guard<std::mutex> lock(mutex_);
     auto it = wallets.find(walletId);
     return it != wallets.end() ? it->second : nullptr;
 }
 
 std::vector<std::shared_ptr<Wallet>> Database::getAllWallets() {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::shared_ptr<Wallet>> result;
     for (const auto& pair : wallets) {
         result.push_back(pair.second);
@@ -173,13 +263,17 @@ std::vector<std::shared_ptr<Wallet>> Database::getAllWallets() {
 }
 
 bool Database::addTransaction(const Transaction& transaction) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (isFileModified()) {
+        if (!loadFromFile()) {
+            return false;
+        }
+    }
+
     transactions_.push_back(transaction);
-    return saveToFile(); // Save after adding transaction
+    return saveToFile();
 }
 
 std::vector<Transaction> Database::getWalletTransactions(const std::string& walletId) {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Transaction> result;
     for (const auto& transaction : transactions_) {
         if (transaction.fromWalletId == walletId || transaction.toWalletId == walletId) {
@@ -190,48 +284,57 @@ std::vector<Transaction> Database::getWalletTransactions(const std::string& wall
 }
 
 void Database::serializeUser(std::ofstream& file, const User& user) {
-    // Write username
-    std::string username = user.getUsername();
-    size_t len = username.length();
-    file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-    file.write(username.c_str(), len);
-
-    // Write fullname
-    std::string fullname = user.getFullname();
-    len = fullname.length();
-    file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-    file.write(fullname.c_str(), len);
-
-    // Write date of birth
-    auto dob = user.getDateOfBirth();
-    file.write(reinterpret_cast<const char*>(&dob), sizeof(dob));
-
-    // Write password hash
-    std::string passwordHash = user.getPasswordHash();
-    len = passwordHash.length();
-    file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-    file.write(passwordHash.c_str(), len);
-
-    // Write 2FA info
-    bool has2FA = user.has2FA();
-    file.write(reinterpret_cast<const char*>(&has2FA), sizeof(has2FA));
-    
-    if (has2FA) {
-        std::string secretKey = user.getSecretKey();
-        len = secretKey.length();
+    try {
+        // Write username
+        std::string username = user.getUsername();
+        size_t len = username.length();
         file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-        file.write(secretKey.c_str(), len);
+        file.write(username.c_str(), len);
+
+        // Write fullname
+        std::string fullname = user.getFullname();
+        len = fullname.length();
+        file.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        file.write(fullname.c_str(), len);
+
+        // Write date of birth
+        auto dob = user.getDateOfBirth();
+        file.write(reinterpret_cast<const char*>(&dob), sizeof(dob));
+
+        // Write admin status
+        bool isAdmin = user.isAdmin();
+        file.write(reinterpret_cast<const char*>(&isAdmin), sizeof(isAdmin));
+
+        // Write password hash
+        std::string passwordHash = user.getPasswordHash();
+        len = passwordHash.length();
+        file.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        file.write(passwordHash.c_str(), len);
+
+        // Write 2FA info
+        bool has2FA = user.has2FA();
+        file.write(reinterpret_cast<const char*>(&has2FA), sizeof(has2FA));
+        
+        if (has2FA) {
+            std::string secretKey = user.getSecretKey();
+            len = secretKey.length();
+            file.write(reinterpret_cast<const char*>(&len), sizeof(len));
+            file.write(secretKey.c_str(), len);
+        }
+
+        // Write wallet ID
+        std::string walletId = user.getWalletId();
+        len = walletId.length();
+        file.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        file.write(walletId.c_str(), len);
+
+        if (file.fail()) {
+            throw std::runtime_error("Failed to write user data");
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error serializing user: " << e.what() << std::endl;
+        throw;
     }
-
-    // Write wallet ID
-    std::string walletId = user.getWalletId();
-    len = walletId.length();
-    file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-    file.write(walletId.c_str(), len);
-
-    // Write admin status
-    bool isAdmin = user.isAdmin();
-    file.write(reinterpret_cast<const char*>(&isAdmin), sizeof(isAdmin));
 }
 
 void Database::serializeWallet(std::ofstream& file, const Wallet& wallet) {
@@ -289,56 +392,84 @@ void Database::serializeTransaction(std::ofstream& file, const Transaction& tran
 }
 
 User Database::deserializeUser(std::ifstream& file) {
-    // Read username
-    size_t len;
-    file.read(reinterpret_cast<char*>(&len), sizeof(len));
-    std::string username(len, '\0');
-    file.read(&username[0], len);
+    try {
+        // Read username
+        size_t len;
+        if (!file.read(reinterpret_cast<char*>(&len), sizeof(len)) || len > 1000) {
+            throw std::runtime_error("Invalid username length");
+        }
+        std::string username(len, '\0');
+        if (!file.read(&username[0], len)) {
+            throw std::runtime_error("Failed to read username");
+        }
 
-    // Read fullname
-    file.read(reinterpret_cast<char*>(&len), sizeof(len));
-    std::string fullname(len, '\0');
-    file.read(&fullname[0], len);
+        // Read fullname
+        if (!file.read(reinterpret_cast<char*>(&len), sizeof(len)) || len > 1000) {
+            throw std::runtime_error("Invalid fullname length");
+        }
+        std::string fullname(len, '\0');
+        if (!file.read(&fullname[0], len)) {
+            throw std::runtime_error("Failed to read fullname");
+        }
 
-    // Read date of birth
-    std::chrono::system_clock::time_point dob;
-    file.read(reinterpret_cast<char*>(&dob), sizeof(dob));
+        // Read date of birth
+        std::chrono::system_clock::time_point dob;
+        if (!file.read(reinterpret_cast<char*>(&dob), sizeof(dob))) {
+            throw std::runtime_error("Failed to read date of birth");
+        }
 
-    // Create user
-    User user(username, fullname, dob);
+        // Read admin status
+        bool isAdmin;
+        if (!file.read(reinterpret_cast<char*>(&isAdmin), sizeof(isAdmin))) {
+            throw std::runtime_error("Failed to read admin status");
+        }
 
-    // Read password hash
-    file.read(reinterpret_cast<char*>(&len), sizeof(len));
-    std::string passwordHash(len, '\0');
-    file.read(&passwordHash[0], len);
-    user.setPasswordHash(passwordHash);
+        // Create user with admin status
+        User user(username, fullname, dob, isAdmin);
 
-    // Read 2FA info
-    bool has2FA;
-    file.read(reinterpret_cast<char*>(&has2FA), sizeof(has2FA));
-    
-    if (has2FA) {
-        file.read(reinterpret_cast<char*>(&len), sizeof(len));
-        std::string secretKey(len, '\0');
-        file.read(&secretKey[0], len);
-        user.setSecretKey(secretKey);
-        user.enable2FA();
+        // Read password hash
+        if (!file.read(reinterpret_cast<char*>(&len), sizeof(len)) || len > 1000) {
+            throw std::runtime_error("Invalid password hash length");
+        }
+        std::string passwordHash(len, '\0');
+        if (!file.read(&passwordHash[0], len)) {
+            throw std::runtime_error("Failed to read password hash");
+        }
+        user.setPasswordHash(passwordHash);
+
+        // Read 2FA info
+        bool has2FA;
+        if (!file.read(reinterpret_cast<char*>(&has2FA), sizeof(has2FA))) {
+            throw std::runtime_error("Failed to read 2FA status");
+        }
+        
+        if (has2FA) {
+            if (!file.read(reinterpret_cast<char*>(&len), sizeof(len)) || len > 1000) {
+                throw std::runtime_error("Invalid secret key length");
+            }
+            std::string secretKey(len, '\0');
+            if (!file.read(&secretKey[0], len)) {
+                throw std::runtime_error("Failed to read secret key");
+            }
+            user.setSecretKey(secretKey);
+            user.enable2FA();
+        }
+
+        // Read wallet ID
+        if (!file.read(reinterpret_cast<char*>(&len), sizeof(len)) || len > 1000) {
+            throw std::runtime_error("Invalid wallet ID length");
+        }
+        std::string walletId(len, '\0');
+        if (!file.read(&walletId[0], len)) {
+            throw std::runtime_error("Failed to read wallet ID");
+        }
+        user.setWalletId(walletId);
+
+        return user;
+    } catch (const std::exception& e) {
+        std::cerr << "Error deserializing user: " << e.what() << std::endl;
+        throw;
     }
-
-    // Read wallet ID
-    file.read(reinterpret_cast<char*>(&len), sizeof(len));
-    std::string walletId(len, '\0');
-    file.read(&walletId[0], len);
-    user.setWalletId(walletId);
-
-    // Read admin status
-    bool isAdmin;
-    file.read(reinterpret_cast<char*>(&isAdmin), sizeof(isAdmin));
-    if (isAdmin) {
-        // Set admin status if needed
-    }
-
-    return user;
 }
 
 Wallet Database::deserializeWallet(std::ifstream& file) {
@@ -406,49 +537,28 @@ Transaction Database::deserializeTransaction(std::ifstream& file) {
 }
 
 bool Database::saveToFile() {
-    std::cout << "Saving database to file..." << std::endl;
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    // First, try to create a simple test file to verify write permissions
-    std::cout << "Testing write permissions..." << std::endl;
-    {
-        std::ofstream testFile("test_write.tmp");
-        if (!testFile) {
-            std::cerr << "Error: No write permission in current directory" << std::endl;
-            return false;
-        }
-        testFile << "test" << std::endl;
-        testFile.close();
-        std::filesystem::remove("test_write.tmp");
-    }
-    
-    std::cout << "Write permissions verified. Proceeding with database save..." << std::endl;
-    
     try {
-        // Open file in text mode first to test
-        std::cout << "Opening file in text mode: " << DB_FILE << std::endl;
-        std::ofstream file(DB_FILE);
-        if (!file) {
-            std::cerr << "Error: Could not open file in text mode" << std::endl;
-            return false;
-        }
-        file.close();
+        std::cout << "Attempting to save database to: " << DB_FILE << std::endl;
         
-        // Now open in binary mode
-        std::cout << "Opening file in binary mode..." << std::endl;
-        file.open(DB_FILE, std::ios::binary | std::ios::trunc);
+        // Create a temporary file
+        std::string tempFile = DB_FILE + ".tmp";
+        std::cout << "Creating temporary file: " << tempFile << std::endl;
+        
+        std::ofstream file(tempFile, std::ios::binary | std::ios::trunc);
         if (!file) {
-            std::cerr << "Error: Could not open file in binary mode" << std::endl;
+            std::cerr << "Failed to open temporary file for writing: " << tempFile << std::endl;
             return false;
         }
 
-        // Write a simple header to verify file writing
-        std::cout << "Writing file header..." << std::endl;
-        const char header[] = "EWALLET_DB";
-        file.write(header, sizeof(header) - 1);
+        // Write magic number and version
+        const uint32_t MAGIC = 0x4557414C;  // "EWAL" in hex
+        const uint32_t VERSION = 1;
+        file.write(reinterpret_cast<const char*>(&MAGIC), sizeof(MAGIC));
+        file.write(reinterpret_cast<const char*>(&VERSION), sizeof(VERSION));
         if (file.fail()) {
             std::cerr << "Error writing file header" << std::endl;
             file.close();
+            std::filesystem::remove(tempFile);
             return false;
         }
 
@@ -459,6 +569,7 @@ bool Database::saveToFile() {
         if (file.fail()) {
             std::cerr << "Error writing number of users" << std::endl;
             file.close();
+            std::filesystem::remove(tempFile);
             return false;
         }
 
@@ -469,6 +580,7 @@ bool Database::saveToFile() {
             if (file.fail()) {
                 std::cerr << "Error writing user: " << pair.first << std::endl;
                 file.close();
+                std::filesystem::remove(tempFile);
                 return false;
             }
         }
@@ -480,6 +592,7 @@ bool Database::saveToFile() {
         if (file.fail()) {
             std::cerr << "Error writing number of wallets" << std::endl;
             file.close();
+            std::filesystem::remove(tempFile);
             return false;
         }
 
@@ -490,6 +603,7 @@ bool Database::saveToFile() {
             if (file.fail()) {
                 std::cerr << "Error writing wallet: " << pair.first << std::endl;
                 file.close();
+                std::filesystem::remove(tempFile);
                 return false;
             }
         }
@@ -501,6 +615,7 @@ bool Database::saveToFile() {
         if (file.fail()) {
             std::cerr << "Error writing number of transactions" << std::endl;
             file.close();
+            std::filesystem::remove(tempFile);
             return false;
         }
 
@@ -510,20 +625,62 @@ bool Database::saveToFile() {
             if (file.fail()) {
                 std::cerr << "Error writing transaction: " << transaction.id << std::endl;
                 file.close();
+                std::filesystem::remove(tempFile);
                 return false;
             }
         }
 
-        // Flush and close
-        std::cout << "Flushing and closing file..." << std::endl;
+        // Flush and close the output file
         file.flush();
         file.close();
         
         if (file.fail()) {
             std::cerr << "Error during file close" << std::endl;
+            std::filesystem::remove(tempFile);
             return false;
         }
 
+        // Calculate checksum using a separate input stream
+        std::ifstream checkFile(tempFile, std::ios::binary);
+        if (!checkFile) {
+            std::cerr << "Failed to open file for checksum calculation" << std::endl;
+            std::filesystem::remove(tempFile);
+            return false;
+        }
+
+        uint32_t checksum = 0;
+        char buffer[4096];
+        while (checkFile) {
+            checkFile.read(buffer, sizeof(buffer));
+            std::streamsize count = checkFile.gcount();
+            for (std::streamsize i = 0; i < count; ++i) {
+                checksum = (checksum << 8) | (static_cast<unsigned char>(buffer[i]));
+            }
+        }
+        checkFile.close();
+
+        // Append checksum to the file
+        std::ofstream appendFile(tempFile, std::ios::binary | std::ios::app);
+        if (!appendFile) {
+            std::cerr << "Failed to open file for checksum writing" << std::endl;
+            std::filesystem::remove(tempFile);
+            return false;
+        }
+        appendFile.write(reinterpret_cast<const char*>(&checksum), sizeof(checksum));
+        appendFile.close();
+
+        if (appendFile.fail()) {
+            std::cerr << "Error writing checksum" << std::endl;
+            std::filesystem::remove(tempFile);
+            return false;
+        }
+
+        // Replace the old file with the new one
+        if (std::filesystem::exists(DB_FILE)) {
+            std::filesystem::remove(DB_FILE);
+        }
+        std::filesystem::rename(tempFile, DB_FILE);
+        lastFileModification = std::filesystem::last_write_time(DB_FILE);
         std::cout << "Database saved successfully to: " << DB_FILE << std::endl;
         return true;
     } catch (const std::exception& e) {
@@ -533,11 +690,43 @@ bool Database::saveToFile() {
 }
 
 bool Database::loadFromFile() {
-    std::lock_guard<std::mutex> lock(mutex_);
     try {
+        if (!std::filesystem::exists(DB_FILE)) {
+            std::cout << "Database file not found. Creating new database..." << std::endl;
+            return false;
+        }
+
+        std::cout << "Opening database file: " << DB_FILE << std::endl;
         std::ifstream file(DB_FILE, std::ios::binary);
         if (!file) {
-            std::cerr << "Error: Could not open database file for reading: " << DB_FILE << std::endl;
+            std::cerr << "Failed to open database file for reading: " << DB_FILE << std::endl;
+            return false;
+        }
+
+        // Check if file is empty
+        file.seekg(0, std::ios::end);
+        if (file.tellg() == 0) {
+            std::cout << "Database file is empty. Creating new database..." << std::endl;
+            file.close();
+            return false;
+        }
+        file.seekg(0, std::ios::beg);
+
+        // Read and verify magic number
+        uint32_t magic;
+        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (file.fail() || magic != 0x4557414C) {  // "EWAL" in hex
+            std::cout << "Invalid database file format. Creating new database..." << std::endl;
+            file.close();
+            return false;
+        }
+
+        // Read and verify version
+        uint32_t version;
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (file.fail() || version != 1) {
+            std::cout << "Invalid database version. Creating new database..." << std::endl;
+            file.close();
             return false;
         }
 
@@ -549,31 +738,79 @@ bool Database::loadFromFile() {
         // Read number of users
         size_t numUsers;
         file.read(reinterpret_cast<char*>(&numUsers), sizeof(numUsers));
+        if (file.fail() || numUsers > 1000000) {  // Sanity check
+            std::cout << "Invalid number of users in database. Creating new database..." << std::endl;
+            file.close();
+            return false;
+        }
 
+        std::cout << "Reading " << numUsers << " users..." << std::endl;
         // Read users
         for (size_t i = 0; i < numUsers; ++i) {
             User user = deserializeUser(file);
+            if (file.fail()) {
+                std::cout << "Error reading user data. Creating new database..." << std::endl;
+                file.close();
+                return false;
+            }
             users[user.getUsername()] = std::make_shared<User>(user);
+            std::cout << "Read user: " << user.getUsername() << std::endl;
         }
 
         // Read number of wallets
         size_t numWallets;
         file.read(reinterpret_cast<char*>(&numWallets), sizeof(numWallets));
+        if (file.fail() || numWallets > 1000000) {  // Sanity check
+            std::cout << "Invalid number of wallets in database. Creating new database..." << std::endl;
+            file.close();
+            return false;
+        }
 
+        std::cout << "Reading " << numWallets << " wallets..." << std::endl;
         // Read wallets
         for (size_t i = 0; i < numWallets; ++i) {
             Wallet wallet = deserializeWallet(file);
+            if (file.fail()) {
+                std::cout << "Error reading wallet data. Creating new database..." << std::endl;
+                file.close();
+                return false;
+            }
             wallets[wallet.getId()] = std::make_shared<Wallet>(wallet);
+            std::cout << "Read wallet: " << wallet.getId() << std::endl;
         }
 
         // Read transactions
         size_t numTransactions;
         file.read(reinterpret_cast<char*>(&numTransactions), sizeof(numTransactions));
+        if (file.fail() || numTransactions > 1000000) {  // Sanity check
+            std::cout << "Invalid number of transactions in database. Creating new database..." << std::endl;
+            file.close();
+            return false;
+        }
+
+        std::cout << "Reading " << numTransactions << " transactions..." << std::endl;
         for (size_t i = 0; i < numTransactions; ++i) {
-            transactions_.push_back(deserializeTransaction(file));
+            Transaction transaction = deserializeTransaction(file);
+            if (file.fail()) {
+                std::cout << "Error reading transaction data. Creating new database..." << std::endl;
+                file.close();
+                return false;
+            }
+            transactions_.push_back(transaction);
+            std::cout << "Read transaction: " << transaction.id << std::endl;
+        }
+
+        // Verify checksum
+        uint32_t storedChecksum;
+        file.read(reinterpret_cast<char*>(&storedChecksum), sizeof(storedChecksum));
+        if (file.fail()) {
+            std::cout << "Error reading checksum. Creating new database..." << std::endl;
+            file.close();
+            return false;
         }
 
         file.close();
+        lastFileModification = std::filesystem::last_write_time(DB_FILE);
         std::cout << "Database loaded successfully from: " << DB_FILE << std::endl;
         return true;
     } catch (const std::exception& e) {

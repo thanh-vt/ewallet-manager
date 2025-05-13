@@ -4,8 +4,8 @@ project(ewallet_manager)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Statically link libgcc, libstdc++, and libwinpthread
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++ -static-libwinpthread")
+# Fully static linking
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
 
 # Add cpp-otp library
 add_subdirectory(deps/cpp-otp)

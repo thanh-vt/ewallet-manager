@@ -15,9 +15,8 @@ User::User(const std::string& username,
     , dateOfBirth_(dob)
     , isAdmin_(isAdmin)
     , has2FA_(false) {
-    // Generate initial password
-    std::string initialPassword = generatePassword();
-    setPassword(initialPassword);
+    // Don't generate initial password by default
+    // Password must be set explicitly using setPassword
 }
 
 void User::setPassword(const std::string& newPassword) {
