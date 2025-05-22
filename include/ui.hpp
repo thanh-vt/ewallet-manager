@@ -34,6 +34,7 @@ private:
     void deleteUser();
     void listUsers();
     void changePassword(std::shared_ptr<User> user);
+    void viewProfile(std::shared_ptr<User> user);
 
     // Wallet management
     void createWallet(std::shared_ptr<User> user);
@@ -45,6 +46,7 @@ private:
     void clearScreen();
     void waitForEnter();
     std::string getInput(const std::string& prompt);
+    std::string getPasswordInput(const std::string& prompt);
     double getAmountInput(const std::string& prompt);
     std::chrono::system_clock::time_point getDateInput(const std::string& prompt);
 

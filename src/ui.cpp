@@ -9,8 +9,11 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <conio.h>
 #else
 #include <cstdlib>
+#include <termios.h>
+#include <unistd.h>
 #endif
 
 UI& UI::getInstance() {
@@ -88,7 +91,7 @@ void UI::showUserMenu(std::shared_ptr<User> user) {
 
         switch (choice) {
             case 1:
-                // View profile
+                viewProfile(user);
                 break;
             case 2:
                 changePassword(user);
@@ -182,12 +185,48 @@ void UI::showWalletMenu(std::shared_ptr<User> user) {
     }
 }
 
+std::string UI::getPasswordInput(const std::string& prompt) {
+    std::string password;
+    std::cout << prompt;
+    
+#ifdef _WIN32
+    char ch;
+    while ((ch = _getch()) != '\r') {  // Read until Enter key
+        if (ch == '\b') {  // Backspace
+            if (!password.empty()) {
+                password.pop_back();
+                std::cout << "\b \b";  // Move back, print space, move back again
+            }
+        } else {
+            password += ch;
+            std::cout << '*';  // Print asterisk instead of the character
+        }
+    }
+    std::cout << std::endl;
+#else
+    // Save terminal settings
+    termios oldt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    termios newt = oldt;
+    newt.c_lflag &= ~ECHO;  // Disable echo
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    // Read password
+    std::getline(std::cin, password);
+
+    // Restore terminal settings
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+#endif
+
+    return password;
+}
+
 std::shared_ptr<User> UI::login() {
     clearScreen();
     std::cout << "=== Login ===\n\n";
     
     std::string username = getInput("Username: ");
-    std::string password = getInput("Password: ");
+    std::string password = getPasswordInput("Password: ");
 
     auto user = Database::getInstance().getUser(username);
     if (!user || !user->verifyPassword(password)) {
@@ -444,12 +483,12 @@ void UI::registerUser() {
     // Get password
     std::string password;
     while (true) {
-        password = getInput("Password: ");
+        password = getPasswordInput("Password: ");
         if (password.length() < 8) {
             std::cout << "Password must be at least 8 characters long.\n";
             continue;
         }
-        std::string confirmPassword = getInput("Confirm Password: ");
+        std::string confirmPassword = getPasswordInput("Confirm Password: ");
         if (password != confirmPassword) {
             std::cout << "Passwords do not match.\n";
             continue;
@@ -528,7 +567,7 @@ void UI::changePassword(std::shared_ptr<User> user) {
     std::cout << "=== Change Password ===\n\n";
 
     // Get current password
-    std::string currentPassword = getInput("Enter current password: ");
+    std::string currentPassword = getPasswordInput("Enter current password: ");
     if (!user->verifyPassword(currentPassword)) {
         std::cout << "Current password is incorrect.\n";
         waitForEnter();
@@ -538,12 +577,12 @@ void UI::changePassword(std::shared_ptr<User> user) {
     // Get new password
     std::string newPassword;
     while (true) {
-        newPassword = getInput("Enter new password: ");
+        newPassword = getPasswordInput("Enter new password: ");
         if (newPassword.length() < 8) {
             std::cout << "Password must be at least 8 characters long.\n";
             continue;
         }
-        std::string confirmPassword = getInput("Confirm new password: ");
+        std::string confirmPassword = getPasswordInput("Confirm new password: ");
         if (newPassword != confirmPassword) {
             std::cout << "Passwords do not match.\n";
             continue;
@@ -560,5 +599,37 @@ void UI::changePassword(std::shared_ptr<User> user) {
     } else {
         std::cout << "Failed to save changes to database.\n";
     }
+    waitForEnter();
+}
+
+void UI::viewProfile(std::shared_ptr<User> user) {
+    clearScreen();
+    std::cout << "=== User Profile ===\n\n";
+
+    // Display user information
+    std::cout << "Username: " << user->getUsername() << "\n";
+    std::cout << "Full Name: " << user->getFullname() << "\n";
+    
+    // Format and display date of birth
+    auto dob = user->getDateOfBirth();
+    auto time = std::chrono::system_clock::to_time_t(dob);
+    std::cout << "Date of Birth: " << std::put_time(std::localtime(&time), "%Y-%m-%d") << "\n";
+    
+    // Display 2FA status
+    std::cout << "2FA Status: " << (user->has2FA() ? "Enabled" : "Disabled") << "\n";
+    
+    // Display admin status
+    std::cout << "Account Type: " << (user->isAdmin() ? "Administrator" : "Regular User") << "\n";
+    
+    // Display wallet information
+    auto wallet = Database::getInstance().getWallet(user->getWalletId());
+    if (wallet) {
+        std::cout << "\nWallet Information:\n";
+        std::cout << "Wallet ID: " << wallet->getId() << "\n";
+        std::cout << "Balance: " << std::fixed << std::setprecision(2) << wallet->getBalance() << " points\n";
+    } else {
+        std::cout << "\nNo wallet associated with this account.\n";
+    }
+
     waitForEnter();
 } 
