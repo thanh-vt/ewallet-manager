@@ -33,6 +33,7 @@ private:
     void updateUser(std::shared_ptr<User> user);
     void deleteUser();
     void listUsers();
+    void changePassword(std::shared_ptr<User> user);
 
     // Wallet management
     void createWallet(std::shared_ptr<User> user);

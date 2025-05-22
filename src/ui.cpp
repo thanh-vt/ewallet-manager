@@ -91,7 +91,7 @@ void UI::showUserMenu(std::shared_ptr<User> user) {
                 // View profile
                 break;
             case 2:
-                // Change password
+                changePassword(user);
                 break;
             case 3:
                 toggle2FA(user);
@@ -519,6 +519,46 @@ void UI::toggle2FA(std::shared_ptr<User> user) {
         } else {
             std::cout << "2FA remains disabled.\n";
         }
+    }
+    waitForEnter();
+}
+
+void UI::changePassword(std::shared_ptr<User> user) {
+    clearScreen();
+    std::cout << "=== Change Password ===\n\n";
+
+    // Get current password
+    std::string currentPassword = getInput("Enter current password: ");
+    if (!user->verifyPassword(currentPassword)) {
+        std::cout << "Current password is incorrect.\n";
+        waitForEnter();
+        return;
+    }
+
+    // Get new password
+    std::string newPassword;
+    while (true) {
+        newPassword = getInput("Enter new password: ");
+        if (newPassword.length() < 8) {
+            std::cout << "Password must be at least 8 characters long.\n";
+            continue;
+        }
+        std::string confirmPassword = getInput("Confirm new password: ");
+        if (newPassword != confirmPassword) {
+            std::cout << "Passwords do not match.\n";
+            continue;
+        }
+        break;
+    }
+
+    // Update password
+    user->setPassword(newPassword);
+
+    // Save changes to database
+    if (Database::getInstance().updateUser(*user)) {
+        std::cout << "Password changed successfully.\n";
+    } else {
+        std::cout << "Failed to save changes to database.\n";
     }
     waitForEnter();
 } 
