@@ -13,6 +13,7 @@ public:
     void showUserMenu(std::shared_ptr<User> user);
     void showAdminMenu(std::shared_ptr<User> admin);
     void showWalletMenu(std::shared_ptr<User> user);
+    void toggle2FA(std::shared_ptr<User> user);
 
 private:
     UI();

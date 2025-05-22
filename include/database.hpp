@@ -1,64 +1,76 @@
 #pragma once
 
-#include "user.hpp"
-#include "wallet.hpp"
 #include <string>
+#include <map>
 #include <vector>
 #include <memory>
-#include <unordered_map>
-#include <fstream>
+#include <chrono>
 #include <filesystem>
+#include "user.hpp"
+#include "wallet.hpp"
+#include "transaction.hpp"
 
 class Database {
-    private:
-        static Database* instance;
-        Database();
-        ~Database();
+private:
+    static Database* instance;
+    std::map<std::string, std::shared_ptr<User>> users;
+    std::map<std::string, std::shared_ptr<Wallet>> wallets;
+    std::vector<Transaction> transactions_;
 
-        std::unordered_map<std::string, std::shared_ptr<User>> users;
-        std::unordered_map<std::string, std::shared_ptr<Wallet>> wallets;
-        std::vector<Transaction> transactions_;
-        std::string DB_FILE;
-        std::filesystem::file_time_type lastFileModification;
+    // File paths
+    std::string USERS_FILE;
+    std::string WALLETS_FILE;
+    std::string TRANSACTIONS_FILE;
 
-        // Helper function to check if file has been modified
-        bool isFileModified();
+    // Last modification times
+    std::filesystem::file_time_type lastUsersModification;
+    std::filesystem::file_time_type lastWalletsModification;
+    std::filesystem::file_time_type lastTransactionsModification;
 
-        // Binary serialization methods
-        void serializeUser(std::ofstream& file, const User& user);
-        void serializeWallet(std::ofstream& file, const Wallet& wallet);
-        void serializeTransaction(std::ofstream& file, const Transaction& transaction);
-        
-        User deserializeUser(std::ifstream& file);
-        Wallet deserializeWallet(std::ifstream& file);
-        Transaction deserializeTransaction(std::ifstream& file);
+    // Private constructor for singleton
+    Database();
+    ~Database();
 
-    public:
-        static Database& getInstance();
-        
-        // Prevent copying
-        Database(const Database&) = delete;
-        Database& operator=(const Database&) = delete;
+    // Helper functions
+    bool isFileModified();
+    void serializeUser(std::ofstream& file, const User& user);
+    void serializeWallet(std::ofstream& file, const Wallet& wallet);
+    void serializeTransaction(std::ofstream& file, const Transaction& transaction);
+    User deserializeUser(std::ifstream& file);
+    Wallet deserializeWallet(std::ifstream& file);
+    Transaction deserializeTransaction(std::ifstream& file);
 
-        // User management
-        bool addUser(const User& user);
-        bool updateUser(const User& user);
-        bool deleteUser(const std::string& username);
-        std::shared_ptr<User> getUser(const std::string& username);
-        std::vector<std::shared_ptr<User>> getAllUsers();
+    // File operations
+    bool saveUsersToFile();
+    bool saveWalletsToFile();
+    bool saveTransactionsToFile();
+    bool loadUsersFromFile();
+    bool loadWalletsFromFile();
+    bool loadTransactionsFromFile();
 
-        // Wallet management
-        bool addWallet(const Wallet& wallet);
-        bool updateWallet(const Wallet& wallet);
-        bool deleteWallet(const std::string& walletId);
-        std::shared_ptr<Wallet> getWallet(const std::string& walletId);
-        std::vector<std::shared_ptr<Wallet>> getAllWallets();
+public:
+    // Singleton instance
+    static Database& getInstance();
 
-        // Transaction management
-        bool addTransaction(const Transaction& transaction);
-        std::vector<Transaction> getWalletTransactions(const std::string& walletId);
+    // File operations
+    bool saveToFiles();
+    bool loadFromFiles();
 
-        // Database operations
-        bool saveToFile();
-        bool loadFromFile();
+    // User operations
+    bool addUser(const User& user);
+    bool updateUser(const User& user);
+    bool deleteUser(const std::string& username);
+    std::shared_ptr<User> getUser(const std::string& username);
+    std::vector<std::shared_ptr<User>> getAllUsers();
+
+    // Wallet operations
+    bool addWallet(const Wallet& wallet);
+    bool updateWallet(const Wallet& wallet);
+    bool deleteWallet(const std::string& walletId);
+    std::shared_ptr<Wallet> getWallet(const std::string& walletId);
+    std::vector<std::shared_ptr<Wallet>> getAllWallets();
+
+    // Transaction operations
+    bool addTransaction(const Transaction& transaction);
+    std::vector<Transaction> getWalletTransactions(const std::string& walletId);
 }; 

@@ -28,7 +28,7 @@ public:
     void setPassword(const std::string& newPassword);
     void setPasswordHash(const std::string& hash) { passwordHash_ = hash; }
     void setSecretKey(const std::string& key) { secretKey_ = key; }
-    void enable2FA();
+    std::string enable2FA(const std::string& existingSecretKey = "");
     void disable2FA();
     void setWalletId(const std::string& walletId);
 

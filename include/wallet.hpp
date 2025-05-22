@@ -4,16 +4,7 @@
 #include <vector>
 #include <chrono>
 #include <memory>
-
-struct Transaction {
-    std::string id;
-    std::string fromWalletId;
-    std::string toWalletId;
-    double amount;
-    std::chrono::system_clock::time_point timestamp;
-    std::string status; // "completed", "failed", "pending"
-    std::string description;
-};
+#include "transaction.hpp"
 
 class Wallet {
 public:

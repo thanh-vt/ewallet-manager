@@ -1,5 +1,5 @@
 #include "ui.hpp"
-#include "database.hpp"
+#include "../include/database.hpp"
 #include <iostream>
 #include <limits>
 #include <iomanip>
@@ -94,7 +94,7 @@ void UI::showUserMenu(std::shared_ptr<User> user) {
                 // Change password
                 break;
             case 3:
-                // Toggle 2FA
+                toggle2FA(user);
                 break;
             case 4:
                 showWalletMenu(user);
@@ -257,7 +257,7 @@ void UI::createUser() {
         std::cout << "Please save this password securely.\n";
         
         // Verify the save was successful
-        if (!Database::getInstance().saveToFile()) {
+        if (!Database::getInstance().saveToFiles()) {
             std::cout << "Warning: Failed to save changes to database.\n";
         }
     } else {
@@ -476,6 +476,49 @@ void UI::registerUser() {
         }
     } else {
         std::cout << "\nWallet creation failed. Please try again.\n";
+    }
+    waitForEnter();
+}
+
+void UI::toggle2FA(std::shared_ptr<User> user) {
+    clearScreen();
+    std::cout << "=== 2FA Settings ===\n\n";
+
+    if (user->has2FA()) {
+        std::cout << "2FA is currently enabled.\n";
+        std::string otp = getInput("Enter current 2FA code to disable: ");
+        if (user->verify2FA(otp)) {
+            user->disable2FA();
+            // Save changes to database
+            if (Database::getInstance().updateUser(*user)) {
+                std::cout << "2FA has been disabled successfully.\n";
+            } else {
+                std::cout << "Failed to save changes to database.\n";
+            }
+        } else {
+            std::cout << "Invalid 2FA code. 2FA remains enabled.\n";
+        }
+    } else {
+        std::cout << "2FA is currently disabled.\n";
+        std::cout << "Enabling 2FA will require you to enter a code from your authenticator app each time you log in.\n";
+        std::string choice = getInput("Do you want to enable 2FA? (yes/no): ");
+        
+        if (choice == "yes" || choice == "y" || choice == "Y" || choice == "Yes") {
+            std::string secretKey = user->enable2FA();
+            // Save changes to database
+            if (Database::getInstance().updateUser(*user)) {
+                std::cout << "\n2FA has been enabled!\n";
+                std::cout << "Please scan this QR code with your authenticator app:\n";
+                std::cout << "Secret Key: " << secretKey << "\n";
+                std::cout << "You can also manually enter this key in your authenticator app.\n";
+            } else {
+                std::cout << "Failed to save changes to database.\n";
+                // Revert the changes if save failed
+                user->disable2FA();
+            }
+        } else {
+            std::cout << "2FA remains disabled.\n";
+        }
     }
     waitForEnter();
 } 

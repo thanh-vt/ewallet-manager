@@ -23,25 +23,53 @@ void User::setPassword(const std::string& newPassword) {
     passwordHash_ = hashPassword(newPassword);
 }
 
-void User::enable2FA() {
-    if (!has2FA_) {
-        // Generate a random secret key for 2FA
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> dis(0, 255);
-        
-        std::vector<uint8_t> secret(20);
-        for (size_t i = 0; i < secret.size(); ++i) {
-            secret[i] = static_cast<uint8_t>(dis(gen));
-        }
-        
-        std::stringstream ss;
-        for (uint8_t byte : secret) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-        }
-        secretKey_ = ss.str();
-        has2FA_ = true;
+std::string User::enable2FA(const std::string& existingSecretKey) {
+    has2FA_ = true;
+    
+    if (!existingSecretKey.empty()) {
+        secretKey_ = existingSecretKey;
+        return secretKey_;
     }
+    
+    // Generate a random secret key for TOTP (at least 20 bytes)
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 255);
+    
+    std::vector<uint8_t> secret(20);  // 20 bytes = 160 bits
+    for (size_t i = 0; i < secret.size(); ++i) {
+        secret[i] = static_cast<uint8_t>(dis(gen));
+    }
+    
+    // Convert to base32
+    const std::string base32_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    std::string base32_secret;
+    base32_secret.reserve(32);  // 20 bytes * 8 bits / 5 bits per base32 char = 32 chars
+    
+    for (size_t i = 0; i < secret.size(); i += 5) {
+        uint64_t buffer = 0;
+        size_t bits = 0;
+        
+        // Fill buffer with up to 5 bytes
+        for (size_t j = 0; j < 5 && (i + j) < secret.size(); ++j) {
+            buffer = (buffer << 8) | secret[i + j];
+            bits += 8;
+        }
+        
+        // Convert to base32
+        while (bits >= 5) {
+            bits -= 5;
+            base32_secret += base32_chars[(buffer >> bits) & 0x1F];
+        }
+    }
+    
+    // Add padding if needed
+    while (base32_secret.length() % 8 != 0) {
+        base32_secret += '=';
+    }
+    
+    secretKey_ = base32_secret;
+    return secretKey_;
 }
 
 void User::disable2FA() {
@@ -59,10 +87,14 @@ bool User::verifyPassword(const std::string& password) const {
 
 bool User::verify2FA(const std::string& code) const {
     if (!has2FA_) {
+        std::cerr << "2FA is not enabled for this user" << std::endl;
         return false;
     }
 
     try {
+        std::cerr << "Verifying 2FA code: " << code << std::endl;
+        std::cerr << "Using secret key: " << secretKey_ << std::endl;
+
         // Register SHA1 HMAC algorithm if not already registered
         if (cotp::OTP::otp_algorithm_map.find("SHA1") == cotp::OTP::otp_algorithm_map.end()) {
             cotp::OTP::register_hmac_algo("SHA1", [](const std::vector<char>& key, const std::vector<char>& message) {
@@ -73,8 +105,13 @@ bool User::verify2FA(const std::string& code) const {
             }, 160);
         }
 
+        // Create TOTP instance with the base32-encoded secret
         auto totp = std::make_unique<cotp::TOTP>(secretKey_, "SHA1", 6, 30);
-        return totp->verify(code, 1);
+        
+        // Verify the code with a window of 1 (allows for slight time drift)
+        bool result = totp->verify(code, 1);
+        std::cerr << "2FA verification result: " << (result ? "success" : "failed") << std::endl;
+        return result;
     } catch (const std::exception& e) {
         std::cerr << "Error verifying 2FA code: " << e.what() << std::endl;
         return false;
