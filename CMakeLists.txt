@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.31)
-project(ewallet_manager)
+project(ewallet-manager)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,15 +29,15 @@ set(HEADERS
 )
 
 # Create executable
-add_executable(ewallet_manager ${SOURCES} ${HEADERS})
+add_executable(ewallet-manager ${SOURCES} ${HEADERS})
 
 # Include directories
-target_include_directories(ewallet_manager PRIVATE
+target_include_directories(ewallet-manager PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/cpp-otp/src
 )
 
 # Link libraries
-target_link_libraries(ewallet_manager PRIVATE
+target_link_libraries(ewallet-manager PRIVATE
     cotp
 )
