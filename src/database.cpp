@@ -191,8 +191,18 @@ bool Database::deleteUser(const std::string& username) {
         }
     }
 
+    // Get the user's wallet ID before deleting the user
+    auto user = getUser(username);
+    if (!user) {
+        return false;
+    }
+    std::string walletId = user->getWalletId();
+
+    // Delete the user
     bool result = users.erase(username) > 0;
     if (result) {
+        // Delete the associated wallet
+        wallets.erase(walletId);
         saveToFiles();
     }
     return result;
@@ -915,5 +925,71 @@ bool Database::loadTransactionsFromFile() {
     } catch (const std::exception& e) {
         std::cerr << "Error loading transactions: " << e.what() << std::endl;
         return false;
+    }
+}
+
+void Database::setBasePath(const std::filesystem::path& path) {
+    // Create database file paths in the specified directory
+    USERS_FILE = (path / "users.dat").string();
+    WALLETS_FILE = (path / "wallets.dat").string();
+    TRANSACTIONS_FILE = (path / "transactions.dat").string();
+    
+    std::cout << "Users database path: " << USERS_FILE << std::endl;
+    std::cout << "Wallets database path: " << WALLETS_FILE << std::endl;
+    std::cout << "Transactions database path: " << TRANSACTIONS_FILE << std::endl;
+
+    // Check if we can write to the directory
+    std::string testFile = (path / "test_write.tmp").string();
+    std::cout << "Testing write permissions with file: " << testFile << std::endl;
+    {
+        std::ofstream test(testFile);
+        if (!test) {
+            throw std::runtime_error("Cannot write to directory: " + path.string());
+        }
+        test << "test" << std::endl;
+        test.close();
+        std::filesystem::remove(testFile);
+    }
+    std::cout << "Write permissions verified" << std::endl;
+
+    // Try to load existing data
+    bool loadSuccess = loadFromFiles();
+    
+    // If loading failed or database is empty, create admin user and wallet
+    if (!loadSuccess || (users.empty() && wallets.empty())) {
+        std::cout << "Creating new database with admin user..." << std::endl;
+        
+        try {
+            std::cout << "Creating admin user..." << std::endl;
+            // Create admin user if not exists
+            auto admin = std::make_shared<User>("admin", "System Administrator", 
+                std::chrono::system_clock::now(), true);
+            admin->setPassword("admin123"); // Default admin password
+            
+            std::cout << "Adding admin user to database..." << std::endl;
+            users["admin"] = admin;  // Add directly to users map
+            
+            std::cout << "Creating admin wallet..." << std::endl;
+            // Create admin wallet
+            auto adminWallet = std::make_shared<Wallet>("ADMIN_WALLET", 1000000.0);
+            
+            std::cout << "Adding admin wallet to database..." << std::endl;
+            wallets["ADMIN_WALLET"] = adminWallet;  // Add directly to wallets map
+            
+            std::cout << "Setting admin wallet ID..." << std::endl;
+            admin->setWalletId(adminWallet->getId());
+            
+            std::cout << "Saving initial database..." << std::endl;
+            // Save the initial database
+            if (!saveToFiles()) {
+                throw std::runtime_error("Failed to save initial database!");
+            }
+            
+            std::cout << "Initial database created successfully!" << std::endl;
+        } catch (const std::exception& e) {
+            throw std::runtime_error("Error creating initial database: " + std::string(e.what()));
+        }
+    } else {
+        std::cout << "Existing database loaded successfully!" << std::endl;
     }
 } 

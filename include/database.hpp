@@ -73,4 +73,7 @@ public:
     // Transaction operations
     bool addTransaction(const Transaction& transaction);
     std::vector<Transaction> getWalletTransactions(const std::string& walletId);
+
+    // Database path operations
+    void setBasePath(const std::filesystem::path& path);
 }; 
