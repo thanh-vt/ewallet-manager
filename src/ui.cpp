@@ -1,5 +1,5 @@
 #include "ui.hpp"
-#include "../include/database.hpp"
+#include "database.hpp"
 #include <iostream>
 #include <limits>
 #include <iomanip>
@@ -307,6 +307,9 @@ void UI::createUser() {
     waitForEnter();
 }
 
+void UI::updateUser(std::shared_ptr<User> user) {
+}
+
 void UI::deleteUser() {
     clearScreen();
     std::cout << "=== Delete User ===\n\n";
@@ -353,6 +356,9 @@ void UI::viewBalance(std::shared_ptr<User> user) {
         std::cout << "Wallet not found.\n";
     }
     waitForEnter();
+}
+
+void UI::createWallet(std::shared_ptr<User> user) {
 }
 
 void UI::transferPoints(std::shared_ptr<User> user) {
@@ -632,4 +638,4 @@ void UI::viewProfile(std::shared_ptr<User> user) {
     }
 
     waitForEnter();
-} 
+}
